@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+
+function suppressThreadedClassNoise() {
+  for (const stream of [process.stdout, process.stderr]) {
+    const originalWrite = stream.write.bind(stream);
+
+    stream.write = (chunk, encoding, cb) => {
+      const text = String(chunk);
+
+      if (
+        text.includes("ThreadedClass") &&
+        text.includes("Skipping exit handler registration")
+      ) {
+        if (typeof encoding === "function") encoding();
+        if (typeof cb === "function") cb();
+        return true;
+      }
+
+      return originalWrite(chunk, encoding, cb);
+    };
+  }
+}
+
+suppressThreadedClassNoise();
+
+const lib =
+  "/opt/fnm/node-versions/v22.16.0/installation/lib/node_modules/atem-connection/dist/atem.js";
+
+const _atem = await import(lib);
+
+const ATEM_IP = process.env.ATEM_IP;
+
+if (!ATEM_IP) {
+  console.error("ERROR: ATEM_IP is required");
+  console.error("Example: ATEM_IP=192.168.1.50 ./atem-streamkey");
+  process.exit(2);
+}
+
+function waitForAtemConnected(atem) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Timed out waiting for ATEM connection"));
+    }, 10_000);
+
+    atem.once("connected", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    atem.once("error", (err) => {
+      clearTimeout(timeout);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
+  });
+}
+
+async function withAtem(fn) {
+  const atem = new _atem.Atem();
+
+  try {
+    atem.connect(ATEM_IP);
+    await waitForAtemConnected(atem);
+    return await fn(atem);
+  } finally {
+    await atem.disconnect().catch(() => {});
+  }
+}
+
+function getStreamingService(atem) {
+  const service = atem.state?.streaming?.service;
+
+  if (!service) {
+    throw new Error("ATEM streaming service state is not available");
+  }
+
+  return {
+    serviceName: service.serviceName ?? "",
+    url: service.url ?? "",
+    key: service.key ?? "",
+  };
+}
+
+async function getStreamKey() {
+  await withAtem(async (atem) => {
+    const service = getStreamingService(atem);
+
+    process.stdout.write(`${JSON.stringify(service, null, 2)}\n`);
+  });
+}
+
+async function setStreamKey(args) {
+  const [newKey, ...extra] = args;
+
+  if (!newKey || extra.length > 0) {
+    throw new Error(
+      "Usage: ATEM_IP=192.168.1.50 ./atem-streamkey set <streamkey>",
+    );
+  }
+
+  await withAtem(async (atem) => {
+    const current = getStreamingService(atem);
+
+    if (!current.serviceName || !current.url) {
+      throw new Error(
+        "Cannot set stream key because current serviceName/url could not be read from the ATEM",
+      );
+    }
+
+    await atem.setStreamingService({
+      serviceName: current.serviceName,
+      url: current.url,
+      key: newKey,
+    });
+  });
+}
+
+async function main() {
+  const [mode, ...args] = process.argv.slice(2);
+
+  if (!mode || mode === "get") {
+    await getStreamKey();
+    process.exit(0);
+  }
+
+  if (mode === "set") {
+    await setStreamKey(args);
+    await getStreamKey();
+    process.exit(0);
+  }
+
+  throw new Error(`Unknown mode: ${mode}
+
+Usage:
+  ATEM_IP=192.168.1.50 ./atem-streamkey
+  ATEM_IP=192.168.1.50 ./atem-streamkey get
+  ATEM_IP=192.168.1.50 ./atem-streamkey set <streamkey>`);
+}
+
+main().catch((err) => {
+  console.error(`ERROR: ${err.message}`);
+  process.exit(1);
+});

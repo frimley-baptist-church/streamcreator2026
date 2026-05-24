@@ -1,0 +1,10 @@
+token.pickle
+client_secrets.json
+config/
+.venv/
+__pycache__/
+.vscode/
+cmd/
+go.mod
+go.sum
+.env
