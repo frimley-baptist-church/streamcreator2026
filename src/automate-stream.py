@@ -19,6 +19,8 @@ from googleapiclient.http import MediaFileUpload
 load_dotenv()
 load_dotenv("/etc/streamcreator2026/config.env")  # Load system-wide env vars if present
 
+NONPROFIT_CATEGORY_ID = "29"
+
 channel_id = os.environ.get("CHANNEL_ID", None)
 if not channel_id:
     print(
@@ -269,6 +271,7 @@ def create_youtube_broadcast(youtube, config):
             "title": config.get("title", "Automated Live Stream"),
             "description": config.get("description", ""),
             "scheduledStartTime": config.get("start"),
+            "categoryId": NONPROFIT_CATEGORY_ID,
         },
         "status": {
             "privacyStatus": config.get("privacy", "public"),
